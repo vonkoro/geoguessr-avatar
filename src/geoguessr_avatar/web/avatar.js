@@ -211,7 +211,10 @@ function faceOffsets(track, time) {
   const q = new THREE.Quaternion(v[4 * i], v[4 * i + 1], v[4 * i + 2], v[4 * i + 3]);
   const e = new THREE.Euler().setFromQuaternion(q);
   const step = (rad) => Math.round(8 * THREE.MathUtils.radToDeg(rad)) / 8;
-  return [step(e.x), step(e.y)];
+  // A few clips (UPSET, UPSET_MORE) carry face data from another rig that points far
+  // outside the 8-cell strips, which would render a blank face. Show the neutral one.
+  const cell = (offset) => (offset >= 0 && offset < 1 ? offset : 0);
+  return [cell(step(e.x)), cell(step(e.y))];
 }
 
 async function applyClip(spec, avatar) {

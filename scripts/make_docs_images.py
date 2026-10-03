@@ -52,7 +52,11 @@ def main() -> None:
         grid(hero, len(hero)).convert("RGB").save(DOCS / "hero.png", optimize=True)
 
         font = ImageFont.load_default(size=13)
-        gallery = [tile(renderer, n, (160, 213), n, font) for n in animations.BUILTIN_ANIMATIONS]
+        gallery = [
+            # WIN_FLIP_JUMP leaves the fixed frame mid-flip, so frame it tightly instead.
+            tile(renderer, n, (160, 213), n, font, framing="fit" if n == "WIN_FLIP_JUMP" else "fixed")
+            for n in animations.BUILTIN_ANIMATIONS
+        ]
         grid(gallery, 8).convert("RGB").save(DOCS / "animations.png", optimize=True)
     print(f"wrote {DOCS / 'hero.png'} and {DOCS / 'animations.png'}")
 
