@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import os
+import re
 import time
 from pathlib import Path
 from typing import Any
@@ -32,7 +33,20 @@ class GeoGuessrError(RuntimeError):
 
 
 class UserNotFound(GeoGuessrError):
-    pass
+    def __init__(self, user_id: str) -> None:
+        super().__init__(f"no GeoGuessr user with ID {user_id}")
+        self.user_id = user_id
+
+
+_USER_ID = re.compile(r"(?:^|/user/)([0-9a-fA-F]{24})(?:[/?#]|$)")
+
+
+def parse_user_id(value: str) -> str:
+    """Return the user ID from an ID or a profile URL like ``geoguessr.com/user/<id>``."""
+    match = _USER_ID.search(value.strip())
+    if not match:
+        raise ValueError(f"expected a GeoGuessr user ID (24 hex characters) or profile URL, got {value!r}")
+    return match.group(1).lower()
 
 
 def default_cache_dir() -> Path:
@@ -85,20 +99,26 @@ class GeoGuessrClient:
 
     async def _get_json(self, url: str, **params: Any) -> Any:
         resp = await self._http.get(url, params=params or None)
-        if resp.status_code == 404:
-            raise UserNotFound(url)
-        if resp.status_code == 204:
+        if resp.status_code in (204, 404):
             return None
         if resp.status_code >= 400:
             raise GeoGuessrError(f"GET {url} -> HTTP {resp.status_code}")
         return resp.json()
 
-    async def get_user(self, user_id: str) -> dict[str, Any]:
-        """Raw public profile (``/api/v3/users/{id}``): nick, country, fullBodyPin, ..."""
-        return await self._get_json(f"{SITE_URL}/api/v3/users/{user_id}")
+    async def get_user(self, user: str) -> dict[str, Any]:
+        """Raw public profile (``/api/v3/users/{id}``): nick, country, fullBodyPin, ...
 
-    async def get_avatar(self, user_id: str) -> Avatar:
+        ``user`` is a user ID or profile URL, as everywhere in this package.
+        """
+        user_id = parse_user_id(user)
+        data = await self._get_json(f"{SITE_URL}/api/v3/users/{user_id}")
+        if not data:
+            raise UserNotFound(user_id)
+        return data
+
+    async def get_avatar(self, user: str) -> Avatar:
         """The player's equipped items (``/api/v4/avatar/user/{id}``)."""
+        user_id = parse_user_id(user)
         data = await self._get_json(f"{SITE_URL}/api/v4/avatar/user/{user_id}")
         if not data:
             raise UserNotFound(user_id)
@@ -112,8 +132,9 @@ class GeoGuessrClient:
         resp.raise_for_status()
         return [AvatarItem.from_api(d) for d in resp.json() or ()]
 
-    async def get_background(self, user_id: str) -> dict[str, Any] | None:
+    async def get_background(self, user: str) -> dict[str, Any] | None:
         """Equipped profile background, or None if the player has none."""
+        user_id = parse_user_id(user)
         return await self._get_json(f"{SITE_URL}/api/v4/avatar/user/{user_id}/background")
 
     # -- Files -------------------------------------------------------------------
@@ -126,12 +147,12 @@ class GeoGuessrClient:
         """A file from the image CDN, e.g. a profile ``pin/<hash>.png``."""
         return await self.fetch(f"{IMAGES_URL}/plain/{path}", immutable=_is_immutable(path))
 
-    async def full_body_png(self, user_id: str) -> bytes:
+    async def full_body_png(self, user: str) -> bytes:
         """GeoGuessr's own static 1080x1440 full-body render. No 3D rendering involved."""
-        user = await self.get_user(user_id)
-        path = (user.get("avatar") or {}).get("fullBodyPath") or user.get("fullBodyPin")
+        profile = await self.get_user(user)
+        path = (profile.get("avatar") or {}).get("fullBodyPath") or profile.get("fullBodyPin")
         if not path:
-            raise GeoGuessrError(f"user {user_id} has no full-body image")
+            raise GeoGuessrError(f"user {profile.get('id', user)} has no full-body image")
         return await self.image(path)
 
     async def fetch(self, url: str, *, immutable: bool = False) -> bytes:

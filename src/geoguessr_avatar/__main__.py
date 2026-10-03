@@ -8,9 +8,9 @@ import sys
 from pathlib import Path
 
 from . import animations
-from .client import GeoGuessrClient
+from .client import GeoGuessrClient, GeoGuessrError, parse_user_id
 from .models import Slot
-from .renderer import AvatarRenderer
+from .renderer import AvatarRenderer, BrowserNotInstalled
 
 
 def _size(value: str) -> tuple[int, int]:
@@ -23,7 +23,7 @@ def main(argv: list[str] | None = None) -> int:
     sub = parser.add_subparsers(dest="command", required=True)
 
     r = sub.add_parser("render", help="render a still PNG of a player's avatar")
-    r.add_argument("user", help="GeoGuessr user ID (the hex string in /user/<id>)")
+    r.add_argument("user", help="GeoGuessr user ID or profile URL (geoguessr.com/user/<id>)")
     r.add_argument("-a", "--animation", help="built-in clip or asset ID (default: player's win animation)")
     when = r.add_mutually_exclusive_group()
     when.add_argument("-t", "--time", type=float, help="seconds into the clip")
@@ -35,7 +35,7 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("-o", "--output", type=Path, help="output file (default: <user>_<animation>.png)")
 
     i = sub.add_parser("info", help="show a player's equipped items")
-    i.add_argument("user")
+    i.add_argument("user", help="GeoGuessr user ID or profile URL")
 
     sub.add_parser("animations", help="list built-in animation clips")
 
@@ -51,7 +51,11 @@ def main(argv: list[str] | None = None) -> int:
         for group, names in groups.items():
             print(f"{group}: {', '.join(names)}")
         return 0
-    return asyncio.run(_info(args) if args.command == "info" else _render(args))
+    try:
+        return asyncio.run(_info(args) if args.command == "info" else _render(args))
+    except (GeoGuessrError, BrowserNotInstalled, ValueError, TimeoutError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
 
 
 async def _info(args: argparse.Namespace) -> int:
@@ -79,7 +83,7 @@ async def _render(args: argparse.Namespace) -> int:
             zoom=args.zoom,
             background=args.background,
         )
-    out = args.output or Path(f"{args.user}_{result.animation}.png")
+    out = args.output or Path(f"{parse_user_id(args.user)}_{result.animation}.png")
     result.save(out)
     print(f"{out}  ({result.animation} at {result.time:.2f}s of {result.duration:.2f}s)", file=sys.stderr)
     return 0

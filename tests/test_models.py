@@ -1,3 +1,5 @@
+import pytest
+
 from geoguessr_avatar import Avatar, Slot, animations
 from geoguessr_avatar.renderer import _avatar_spec
 
@@ -50,3 +52,20 @@ def test_animation_names():
     assert animations.normalize("CHAIR_WIN") is None
     assert len(set(animations.BUILTIN_ANIMATIONS)) == len(animations.BUILTIN_ANIMATIONS)
     assert set(animations.HANDHELD_ANIMATIONS) <= set(animations.BUILTIN_ANIMATIONS)
+
+
+def test_parse_user_id_accepts_ids_and_profile_urls():
+    from geoguessr_avatar import parse_user_id
+
+    uid = "656461a8a02239a1b6a4482e"
+    for value in (
+        uid,
+        uid.upper(),
+        f" {uid} ",
+        f"https://www.geoguessr.com/user/{uid}",
+        f"geoguessr.com/uk/user/{uid}?tab=stats",
+    ):
+        assert parse_user_id(value) == uid
+    for bad in ("", "656461a8", f"{uid}ff", "https://www.geoguessr.com/maps/abc"):
+        with pytest.raises(ValueError):
+            parse_user_id(bad)

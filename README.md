@@ -1,189 +1,280 @@
 # geoguessr-avatar
 
-Fetch GeoGuessr avatars and render them as still PNGs in any animation pose: a player's
-own win animation (including purchased ones with props, like the office chair), the
-built-in lose poses, taunts, idles and more.
+Render any GeoGuessr player's 3D avatar as a PNG, in any animation pose: their own win
+animation (including purchased ones with props, like the office chair), lose poses, taunts,
+idles and more. Built for things like daily-challenge podium images in community bots.
 
-Built for things like daily-challenge podium images in community bots.
+![One avatar in six poses](https://raw.githubusercontent.com/vonkoro/geoguessr-avatar/main/docs/hero.png)
 
-> Unofficial. Not affiliated with or endorsed by GeoGuessr. This uses undocumented
-> endpoints of geoguessr.com that can change at any time. Avatar assets belong to
+> Unofficial. Not affiliated with or endorsed by GeoGuessr. It uses undocumented
+> geoguessr.com endpoints, which can change at any time. Avatar assets belong to
 > GeoGuessr; this package downloads them on demand and does not redistribute them.
 
-## How it works
-
-GeoGuessr has no "posed avatar" image. The site draws avatars live in three.js. This
-package does the same thing in headless Chromium (via Playwright):
-
-1. reads the player's equipped items from the public avatar API,
-2. downloads the meshes, textures and animation clips (cached on disk),
-3. assembles the avatar the way the site does: clothing re-bound to one skeleton,
-   morph targets (hats squashing hair), hidden slots, face expressions, held items,
-4. jumps to the requested moment of the clip and renders it with a toon shader that
-   matches the site's look.
-
-No login or `_ncfa` cookie is needed.
-
-## Install
+## Quick start
 
 ```sh
-pip install geoguessr-avatar      # or: uv add geoguessr-avatar
-playwright install chromium       # one-time browser download
+pip install geoguessr-avatar
+playwright install chromium          # one-time download of the browser used for rendering
+
+geoguessr-avatar render 656461a8a02239a1b6a4482e -a LOSE_KNEES -o knees.png
 ```
 
-On a Linux server: `playwright install --with-deps --only-shell chromium`. Rendering uses
-SwiftShader (software WebGL) by default, so no GPU is required.
+That's a real player (thanks, Felix), so the command works as-is. Swap in anyone's user ID,
+or paste their profile URL: `https://www.geoguessr.com/user/<user-id>`.
 
-## Usage
+> If pip can't find the package, the first PyPI release isn't out yet. Install from GitHub
+> instead: `pip install git+https://github.com/vonkoro/geoguessr-avatar`
 
-The user ID is the hex string in a profile URL: `geoguessr.com/user/<user-id>`.
-
-### Plain (synchronous) code
+From Python:
 
 ```python
 from geoguessr_avatar import SyncAvatarRenderer
 
-renderer = SyncAvatarRenderer()  # starts Chromium; create once and reuse
-
-# The player's own win animation (or the default WIN), held 1 s before its end.
-renderer.render("<user-id>").save("win.png")
-
-# Any built-in clip, at a moment of your choice.
-renderer.render("<user-id>", "LOSE_KNEES", progress=0.5).save("knees.png")
-
-# Or by seconds, and any win-animation asset by ID.
-chair = renderer.render("<user-id>", "WINANIMATION_HERMANMILLER_XZNC", time=3.0)
-png_bytes = chair.png  # ready to upload or paste into a bigger image
-
-renderer.close()  # or use it as a context manager: `with SyncAvatarRenderer() as renderer:`
+with SyncAvatarRenderer() as renderer:
+    renderer.render("656461a8a02239a1b6a4482e").save("win.png")  # their own win animation
+    renderer.render("656461a8a02239a1b6a4482e", "LOSE_KNEES").save("knees.png")
 ```
 
-`SyncAvatarRenderer` runs its own event loop on a background thread, so it is safe to call
-from several threads, and from inside async code too. `render()` takes a `timeout`
-(default 120 s).
+No login, API key or GeoGuessr cookie is needed.
 
-Starting Chromium takes about a second. After that, a render takes about 0.5–1 s. For a
-one-off script, `render_avatar("<user-id>", "WIN_FLIP_JUMP")` does both in one call.
+## Using it in your code
 
-### asyncio
+Create one renderer when your program starts and reuse it. Starting the browser takes
+about a second, and each render after that takes about 0.5–1 s.
+
+```python
+from geoguessr_avatar import SyncAvatarRenderer
+
+renderer = SyncAvatarRenderer()
+
+result = renderer.render(user_id, "LOSE_KNEES", progress=0.5)
+result.png  # PNG bytes: save, upload, or paste into a bigger image
+result.save("knees.png")
+
+renderer.close()  # when your program shuts down
+```
+
+`SyncAvatarRenderer` is safe to call from several threads, and from inside async code.
+
+If your code is `async`, use `AvatarRenderer`. It takes exactly the same arguments:
 
 ```python
 from geoguessr_avatar import AvatarRenderer
 
 async with AvatarRenderer() as renderer:
-    result = await renderer.render("<user-id>", "LOSE_KNEES", progress=0.5)
+    result = await renderer.render(user_id, "LOSE_KNEES", progress=0.5)
 ```
 
-Both renderers take the same `render()` arguments.
+For a one-off script, `render_avatar(user_id, "LOSE_KNEES")` starts a browser, renders
+and closes in one call.
 
-### Options
+## Choosing the animation
 
-| Parameter | Default | Meaning |
-|---|---|---|
-| `animation` | `None` | `None`: the player's equipped win animation, else `WIN`. A built-in name (see below), or an animation asset ID / `AvatarItem`. |
-| `time` / `progress` | 1 s before end | Moment to render, in seconds or 0.0–1.0. Clamped to the clip. |
-| `width`, `height` | `1080`, `1440` | Output size. The default matches GeoGuessr's own full-body image. |
-| `framing` | `"fixed"` | `"fixed"`: one camera for everyone, identical to GeoGuessr's full-body image. `"fit"`: crop tightly to the posed avatar. |
-| `zoom` | `1.0` | Fixed framing only. Use `0.85` for headroom: tall hats and jumps are cropped at `1.0`, just like on the site. |
-| `background` | `None` | Hex colour, or transparent. |
-| `supersample` | `2.0` | Render scale before downsampling (anti-aliasing). |
+| `animation=` | What you get |
+|---|---|
+| *(omitted)* | The player's equipped win animation. Players without one get the default `WIN`. |
+| a built-in name, e.g. `"LOSE_KNEES"` | The same clip for everyone. See the gallery below. |
+| a win-animation asset ID, e.g. `"WINANIMATION_HERMANMILLER_XZNC"` | Any purchasable win animation, on any player. |
 
-`RenderResult` has `.png` (bytes), `.save(path)`, `.animation`, `.time`, `.duration` and
-`.bounds`.
+Players can only customise their **win** animation. All the lose, taunt and idle clips are
+shared, so for "losing" poses your code picks the clip.
+
+To see a player's items and the ID of their win animation:
+
+```sh
+geoguessr-avatar info 656461a8a02239a1b6a4482e
+```
 
 ### Built-in animations
 
-```
-win:   WIN WIN_BALLERINA WIN_FINGERGUNS WIN_FLIP_JUMP WIN_KAWAII WIN_MEDITATION
-       WIN_RAISE_THE_ROOF WIN_WAVE CELEBRATE
-lose:  LOSE LOSE_CROSSED_ARMS LOSE_JAWDROP LOSE_KNEES LOSE_SAGGING LOSE_SITTING
-       LOSE_SWING_FIST UPSET UPSET_MORE
-taunt: TAUNT_BOXER TAUNT_COME_AT_ME TAUNT_CRANE_KICK TAUNT_EYES_ON_YOU TAUNT_OBJECTION
-idle:  IDLE IDLE_EAGER IDLE_CROSSED IDLE_ARMS_CROSSED IDLE_ARMS_SIDES IDLE_DISCIPLINED
-       IDLE_RELAXED IDLE_RESTING_ARM
-other: SECOND_WIND SLEEP ENERGY_BOOST OK_GUESS PING_HEAD PING_LOWER PING_UPPER BADGE_SHOW
-       BADGE_SHOW_IDLE SELECT EMOTE_HELLO GAMING GAMING_WAITING BALANCE_LEFT BALANCE_RIGHT
-       BALANCE_RUN BALANCE_RUN_BACK
-```
+Shown at the default frame (see the next section). `geoguessr-avatar animations` prints the
+same list.
 
-Players can only customise their **win** animation (equipment slot 12). Everything else is
-shared by all players, so for "losing" poses your code picks the clip.
+![Every built-in animation](https://raw.githubusercontent.com/vonkoro/geoguessr-avatar/main/docs/animations.png)
 
-### Podium example
+## Choosing the moment
 
-[`examples/podium.py`](examples/podium.py) renders the top three on a podium: the winner in
-their own win animation, the others in a built-in pose.
+An animation is a few seconds long, so you pick which moment becomes the picture:
+
+- `time=2.5`: seconds from the start.
+- `progress=0.5`: halfway; 0.0 is the start and 1.0 the end.
+- Neither: 1 second before the end, the frame GeoGuessr itself holds a pose on.
+
+Many clips start and end in a neutral stance. If the default frame looks plain, try a few
+`progress` values; the CLI makes that quick:
 
 ```sh
-uv run --with pillow examples/podium.py <first-id> <second-id> <third-id> -o podium.png
+for p in 0.2 0.4 0.6 0.8; do geoguessr-avatar render <user> -a LOSE_SAGGING -p $p -o sag_$p.png; done
 ```
 
-### Data only
+## Size and framing
+
+The default output is a 1080×1440 PNG with a transparent background, framed exactly like
+GeoGuessr's own full-body image.
+
+| Option | Default | What it does |
+|---|---|---|
+| `width`, `height` | `1080`, `1440` | Output size in pixels. |
+| `framing` | `"fixed"` | `"fixed"`: the same camera for every player and pose, so everyone has the same scale. `"fit"`: crop tightly around the posed avatar. |
+| `zoom` | `1.0` | Fixed framing only. `0.85` leaves headroom: tall hats and jumps get cropped at `1.0`, just like on the site. |
+| `margin` | `0.04` | Fit framing only: empty space around the avatar. |
+| `background` | `None` | A hex colour such as `"#1d1b2e"`, or `None` for transparent. |
+| `supersample` | `2.0` | Anti-aliasing quality. Higher is smoother and slower. |
+| `timeout` | `120` | `SyncAvatarRenderer` only: seconds before giving up. |
+
+A few clips move the avatar sideways (e.g. `WIN_FLIP_JUMP`) and can leave a fixed frame. Use
+`framing="fit"` for those.
+
+## Recipes
+
+**Podium.** [`examples/podium.py`](https://github.com/vonkoro/geoguessr-avatar/blob/main/examples/podium.py) puts the top three on a podium: the
+winner in their own win animation, the others in a built-in pose. It needs Pillow
+(`pip install pillow`).
+
+```sh
+python examples/podium.py <first-id> <second-id> <third-id> -o podium.png
+```
+
+**Sending to a chat.** Apps that recompress photos (Telegram's `sendPhoto`, for example)
+lose the transparency. Either pass `background="#..."`, or paste the PNG onto your own
+image first.
+
+**Just the data, no rendering:**
 
 ```python
+import asyncio
 from geoguessr_avatar import GeoGuessrClient, Slot
 
-async with GeoGuessrClient() as gg:
-    avatar = await gg.get_avatar("<user-id>")
-    print([i.id for i in avatar.items], avatar.win_animation)
-    hair_glb = await gg.asset(avatar.item(Slot.HAIR).mesh_glb)  # raw .glb bytes
-    static_png = await gg.full_body_png("<user-id>")  # GeoGuessr's own render
+
+async def main():
+    async with GeoGuessrClient() as gg:
+        avatar = await gg.get_avatar("656461a8a02239a1b6a4482e")
+        print([item.id for item in avatar.items], avatar.win_animation)
+        hair_glb = await gg.asset(avatar.item(Slot.HAIR).mesh_glb)  # raw 3D model
+        static_png = await gg.full_body_png(avatar.user_id)  # GeoGuessr's own static image
+
+
+asyncio.run(main())
 ```
 
-### Command line
+## Command line
 
 ```sh
-geoguessr-avatar render <user-id> -a LOSE_KNEES -p 0.5 -o knees.png
-geoguessr-avatar render <user-id> --zoom 0.85 --background '#1d1b2e'
-geoguessr-avatar info <user-id>        # equipped items and win animation
-geoguessr-avatar animations            # list built-in clips
+geoguessr-avatar render <user> [-a ANIMATION] [-t SECONDS | -p PROGRESS] [-o FILE]
+                        [--framing fixed|fit] [--zoom 0.85] [--size 540x720] [--background '#1d1b2e']
+geoguessr-avatar info <user>       # equipped items and win animation
+geoguessr-avatar animations        # list built-in animations
 ```
 
-### Docker
+`<user>` is a user ID or a profile URL. Without `-o`, the file is named
+`<user-id>_<animation>.png`.
+
+## Running on a server
+
+Rendering runs on the CPU (software WebGL), so no GPU is needed. On Linux, install the
+browser together with its system libraries:
+
+```sh
+playwright install --with-deps --only-shell chromium
+```
+
+Or use the included Dockerfile:
 
 ```sh
 docker build -t geoguessr-avatar .
-docker run --rm -v "$PWD:/out" geoguessr-avatar render <user-id> -o /out/win.png
+docker run --rm -v "$PWD:/out" geoguessr-avatar render <user> -o /out/win.png
 ```
 
-## Caching
+## Troubleshooting
 
-Downloaded files are cached in `$XDG_CACHE_HOME/geoguessr-avatar` (default
-`~/.cache/geoguessr-avatar`). Content-hashed assets are kept forever, and built-in
-animation clips are re-checked weekly. Pass `GeoGuessrClient(cache_dir=...)` to change it.
-Avatar loadouts are always fetched fresh.
+| Message | Fix |
+|---|---|
+| `Chromium for Playwright is not installed` | Run `playwright install chromium` (on Linux: `playwright install --with-deps --only-shell chromium`). |
+| `no GeoGuessr user with ID ...` | Check the ID. It's the 24-character code at the end of the profile URL. |
+| `unknown animation ...` | Check the spelling; the error suggests close matches. `geoguessr-avatar animations` lists them all. |
+| Avatar cut off at the top or side | Use `zoom=0.85`, or `framing="fit"`. |
+| First render is slow | The first render downloads the player's models and textures. They're cached after that. |
 
-## Endpoints used
+To see what's happening, turn on logging: `logging.basicConfig(level=logging.DEBUG)`.
+
+## API reference
+
+Everything is importable from `geoguessr_avatar`.
+
+**Renderers**
+- `SyncAvatarRenderer(cache_dir=None, software_gl=True)`: blocking. `.render(...)`, `.close()`, usable as `with`.
+- `AvatarRenderer(client=None, cache_dir=None, software_gl=True)`: async. `await .render(...)`, `await .aclose()`, usable as `async with`.
+- `render(user, animation=None, *, time, progress, width, height, framing, zoom, margin, background, supersample)` returns a `RenderResult`. `user` can also be an `Avatar` you already fetched.
+- `render_avatar(user, animation=None, **options)`: one-shot helper.
+- `software_gl=False` uses the machine's GPU instead of software rendering.
+
+**`RenderResult`**: `.png` (bytes), `.save(path)`, `.animation` (clip name or asset ID),
+`.time` and `.duration` (seconds), `.bounds` (3D bounding box of the posed avatar).
+
+**`GeoGuessrClient(ncfa=None, cache_dir=None)`** (async)
+- `get_avatar(user)` returns an `Avatar`.
+- `get_user(user)` returns the raw public profile as a dict.
+- `get_assets([ids])` returns a list of `AvatarItem`.
+- `get_background(user)` returns the equipped background, or `None`.
+- `asset(path)`, `image(path)`, `full_body_png(user)` return bytes.
+
+**Data**
+- `Avatar`: `.user_id`, `.items`, `.item(Slot.X)`, `.win_animation`, `.emotes`.
+- `AvatarItem`: `.id`, `.slot`, `.mesh_glb`, `.texture`, `.morph_target`, `.hides`, `.raw`.
+- `Slot`: equipment slots (`HAIR`, `HATS`, `ANIMATION_WIN`, ...).
+- `animations`: `BUILTIN_ANIMATIONS`, `WIN_ANIMATIONS`, `LOSE_ANIMATIONS`, `TAUNT_ANIMATIONS`, `IDLE_ANIMATIONS`.
+- `parse_user_id(text)`: user ID from an ID or profile URL.
+
+**Errors**: `UserNotFound` (subclass of `GeoGuessrError`), `BrowserNotInstalled`,
+`ValueError` for bad input, and `TimeoutError` from `SyncAvatarRenderer`.
+
+## How it works
+
+GeoGuessr doesn't serve posed avatar images; the site draws avatars live with three.js.
+This package does the same in a headless Chromium:
+
+1. reads the player's equipped items from GeoGuessr's public avatar API,
+2. downloads the 3D models, textures and animation clips (cached on disk),
+3. assembles the avatar the way the site does: clothing on one skeleton, hats squashing
+   hair, costumes hiding what's under them, face expressions, held items,
+4. jumps to the chosen moment and renders it with a toon shader matching the site's look.
 
 | Data | Endpoint |
 |---|---|
 | Equipped items | `GET /api/v4/avatar/user/{userId}` |
 | Asset lookup by ID | `GET /api/v4/avatar/assets?ids=...` |
-| Meshes, textures, win-animation clips | `https://www.geoguessr.com/assets/{path}` |
-| Built-in clips, head | `/static/avatar-assets/animations/{NAME}.glb`, `/static/avatar-assets/head/head.glb` |
-| Profile, full-body image | `GET /api/v3/users/{userId}`, `/images/plain/{path}` |
+| Models, textures, win-animation clips | `https://www.geoguessr.com/assets/{path}` |
+| Built-in clips, head model | `/static/avatar-assets/animations/{NAME}.glb`, `/static/avatar-assets/head/head.glb` |
+| Profile, static full-body image | `GET /api/v3/users/{userId}`, `/images/plain/{path}` |
+
+**Caching:** files go to `~/.cache/geoguessr-avatar` (or `$XDG_CACHE_HOME/geoguessr-avatar`;
+change it with `cache_dir=`). Models and textures are kept forever because their URLs
+change whenever the content does. Built-in clips are re-checked weekly. A player's equipped
+items are always fetched fresh.
 
 ## Limitations
 
-- Still frames only. For animation output, render several frames and assemble them yourself.
-- Club-branded clothing renders with its base texture, without the club logo.
-- Companions (pets), badges and emote bubbles are not drawn.
-- The idle eye-blink is random on the site and not reproduced.
+- Still images only. For an animation, render several frames and combine them yourself.
+- Club-branded clothing shows its base texture, without the club logo.
+- Pets, badges and emote bubbles are not drawn.
+- The random idle eye-blink isn't reproduced.
 
 ## Development
 
 ```sh
 uv sync
 uv run playwright install chromium
-uv run pytest                                          # offline tests
-GEOGUESSR_AVATAR_NETWORK_TESTS=1 uv run pytest         # + live site and Chromium
+uv run pytest                                      # offline tests
+GEOGUESSR_AVATAR_NETWORK_TESTS=1 uv run pytest     # + live site and Chromium
 uv run ruff check . && uv run ruff format --check .
+uv run scripts/make_docs_images.py                 # regenerate the README images
 ```
 
-`src/geoguessr_avatar/web/vendor/` holds three.js r185 (MIT, see `three-LICENSE`), the
-version geoguessr.com uses, plus its Draco decoder.
+CI runs the live tests weekly, so a failing scheduled run means geoguessr.com changed
+something. `src/geoguessr_avatar/web/vendor/` holds three.js r185 (MIT, see
+`three-LICENSE`), the same version geoguessr.com uses, plus its Draco decoder.
 
-## Releasing
+### Releasing
 
 1. Bump `version` in `pyproject.toml` and commit.
 2. Create a GitHub release with a tag like `v0.1.0`. The `Publish to PyPI` workflow builds

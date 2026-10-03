@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import concurrent.futures
+import difflib
 import logging
 import mimetypes
 import threading
@@ -14,6 +15,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from playwright.async_api import Browser, Page, Playwright, Route, async_playwright
+from playwright.async_api import Error as PlaywrightError
 
 from . import animations
 from .client import SITE_URL, GeoGuessrClient
@@ -44,6 +46,20 @@ FIXED_HEIGHT = 1.184
 FIXED_BOTTOM = 0.497 - FIXED_HEIGHT / 2
 
 Framing = Literal["fixed", "fit"]
+
+INSTALL_HINT = (
+    "Chromium for Playwright is not installed. Run:\n"
+    "    playwright install chromium\n"
+    "On a Linux server use:\n"
+    "    playwright install --with-deps --only-shell chromium"
+)
+
+
+class BrowserNotInstalled(RuntimeError):
+    """Playwright's Chromium hasn't been downloaded yet."""
+
+    def __init__(self) -> None:
+        super().__init__(INSTALL_HINT)
 
 
 @dataclass(frozen=True)
@@ -105,9 +121,16 @@ class AvatarRenderer:
         if self._page:
             return
         self._pw = await async_playwright().start()
-        self._browser = await self._pw.chromium.launch(
-            args=self._browser_args, executable_path=self._executable_path
-        )
+        try:
+            self._browser = await self._pw.chromium.launch(
+                args=self._browser_args, executable_path=self._executable_path
+            )
+        except PlaywrightError as exc:
+            await self._pw.stop()
+            self._pw = None
+            if "Executable doesn't exist" in str(exc):
+                raise BrowserNotInstalled() from None
+            raise
         page = await self._browser.new_page()
         page.on("console", _log_console)
         page.on("pageerror", lambda e: log.error("renderer page error: %s", e))
@@ -215,7 +238,13 @@ class AvatarRenderer:
                 }
             found = await self.client.get_assets([animation])
             if not found:
-                raise ValueError(f"{animation!r} is neither a built-in animation nor a known asset ID")
+                close = difflib.get_close_matches(animation.upper(), animations.BUILTIN_ANIMATIONS, n=3)
+                hint = f" Did you mean {' or '.join(close)}?" if close else ""
+                raise ValueError(
+                    f"unknown animation {animation!r}: not a built-in clip or a known asset ID.{hint}"
+                    " (Built-in clips are listed in geoguessr_avatar.animations or by"
+                    " `geoguessr-avatar animations`.)"
+                )
             animation = found[0]
         if not animation.mesh_glb:
             raise ValueError(f"asset {animation.id} has no animation GLB")
@@ -288,6 +317,9 @@ def _avatar_spec(avatar: Avatar) -> dict[str, Any]:
 
 def _log_console(msg: Any) -> None:
     level = {"error": logging.ERROR, "warning": logging.WARNING}.get(msg.type, logging.DEBUG)
+    # Some clips animate helper nodes that have no mesh; the site gets the same warnings.
+    if "No target node found for track" in msg.text or "GPU stall due to ReadPixels" in msg.text:
+        level = logging.DEBUG
     log.log(level, "renderer console: %s", msg.text)
 
 

@@ -48,3 +48,16 @@ async def test_builtin_and_asset_clips(renderer, avatar_payload):
 async def test_time_and_progress_are_exclusive(renderer):
     with pytest.raises(ValueError):
         await renderer.render("u", time=1, progress=0.5)
+
+
+async def test_unknown_animation_suggests_close_match(renderer, avatar_payload):
+    with pytest.raises(ValueError, match="Did you mean LOSE_KNEES"):
+        await renderer._resolve_clip(Avatar.from_api("u", avatar_payload), "LOSE_KNEE")
+
+
+def test_cli_prints_errors_without_traceback(capsys):
+    from geoguessr_avatar.__main__ import main
+
+    assert main(["info", "not-a-user"]) == 1
+    err = capsys.readouterr().err
+    assert err.startswith("error: expected a GeoGuessr user ID") and "Traceback" not in err
