@@ -22,9 +22,6 @@ geoguessr-avatar render 656461a8a02239a1b6a4482e -a LOSE_KNEES -o knees.png
 That's a real player (thanks, Felix), so the command works as-is. Swap in anyone's user ID,
 or paste their profile URL: `https://www.geoguessr.com/user/<user-id>`.
 
-> If pip can't find the package, the first PyPI release isn't out yet. Install from GitHub
-> instead: `pip install git+https://github.com/vonkoro/geoguessr-avatar`
-
 From Python:
 
 ```python
