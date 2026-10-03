@@ -1,0 +1,58 @@
+[project]
+name = "geoguessr-avatar"
+version = "0.1.0"
+description = "Fetch GeoGuessr avatars and render them in any win/lose/emote animation pose"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE", "src/geoguessr_avatar/web/vendor/three-LICENSE"]
+authors = [
+    { name = "vonkoro", email = "vonkoro@proton.me" }
+]
+requires-python = ">=3.10"
+keywords = ["geoguessr", "avatar", "three.js", "playwright", "render"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Framework :: AsyncIO",
+    "Topic :: Games/Entertainment",
+    "Topic :: Multimedia :: Graphics :: 3D Rendering",
+]
+dependencies = [
+    "httpx>=0.27",
+    "playwright>=1.49",
+]
+
+[project.urls]
+Homepage = "https://github.com/vonkoro/geoguessr-avatar"
+Issues = "https://github.com/vonkoro/geoguessr-avatar/issues"
+
+[project.scripts]
+geoguessr-avatar = "geoguessr_avatar.__main__:main"
+
+[build-system]
+requires = ["uv_build>=0.11.3,<0.12.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pillow>=11",
+    "pytest>=9.0.3",
+    "pytest-asyncio>=1.3.0",
+    "ruff>=0.16.10",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+markers = ["network: hits geoguessr.com and launches Chromium (set GEOGUESSR_AVATAR_NETWORK_TESTS=1)"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
