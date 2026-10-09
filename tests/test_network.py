@@ -1,7 +1,9 @@
 """End-to-end checks against the live site. Opt in with GEOGUESSR_AVATAR_NETWORK_TESTS=1."""
 
 import io
+import json
 import os
+import struct
 
 import pytest
 
@@ -34,6 +36,25 @@ async def test_render_poses():
             alpha = img.getchannel("A")
             assert alpha.getextrema() == (0, 255), "expected transparent background and opaque avatar"
             assert 0 <= result.time <= result.duration
+
+
+async def test_export_model():
+    async with AvatarRenderer() as renderer:
+        result = await renderer.export_model(USER, "WINANIMATION_HERMANMILLER_XZNC", progress=0.5)
+    magic, version, length = struct.unpack_from("<4sII", result.glb)
+    assert (magic, version, length) == (b"glTF", 2, len(result.glb))
+    chunk_length, chunk_type = struct.unpack_from("<I4s", result.glb, 12)
+    assert chunk_type == b"JSON"
+    gltf = json.loads(result.glb[20 : 20 + chunk_length])
+
+    assert result.time == pytest.approx(result.duration / 2)
+    [animation] = gltf["animations"]
+    assert animation["name"] == "WINANIMATION_HERMANMILLER_XZNC"
+    assert gltf["skins"] and gltf["images"]
+    names = {node.get("name", "") for node in gltf["nodes"]}
+    assert {"head", "Hips"} <= names
+    assert any(name.startswith("PROP_") for name in names), "expected the win animation's chair"
+    assert all("material" in p for mesh in gltf["meshes"] for p in mesh["primitives"]), "toon shader leaked"
 
 
 def test_sync_renderer_threads_and_running_loop():

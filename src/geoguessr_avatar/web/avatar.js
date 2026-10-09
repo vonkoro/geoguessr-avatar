@@ -1,8 +1,10 @@
-// Rebuilds a GeoGuessr avatar from its parts and renders one animation frame.
-// Driven from Python via window.renderAvatar(spec); see renderer.py for the spec shape.
+// Rebuilds a GeoGuessr avatar from its parts and renders one animation frame, or exports
+// it as a GLB. Driven from Python via window.renderAvatar(spec) and
+// window.exportAvatar(spec); see renderer.py for the spec shape.
 
 import * as THREE from 'three';
 import { GLTFLoader } from './vendor/GLTFLoader.js';
+import { GLTFExporter } from './vendor/GLTFExporter.js';
 import { DRACOLoader } from './vendor/DRACOLoader.js';
 import { clone as cloneSkinned } from './vendor/SkeletonUtils.js';
 
@@ -96,8 +98,9 @@ const toonFragment = /* glsl */ `
   }
 `;
 
-function toonMaterial(texture, { skinned = true } = {}) {
+function toonMaterial(texture, { skinned = true, name = '' } = {}) {
   return new THREE.ShaderMaterial({
+    name,
     uniforms: {
       tex: { value: texture },
       repeat: { value: new THREE.Vector2(1, 1) },
@@ -141,8 +144,9 @@ function skinnedMeshes(root) {
 
 // GeoGuessr re-binds every clothing mesh to the head's skeleton with an identity bind
 // matrix, so we do the same rather than keeping each GLB's own skeleton.
-function rebind(source, skeleton, material) {
+function rebind(source, skeleton, material, name) {
   const mesh = new THREE.SkinnedMesh(source.geometry, material);
+  mesh.name = name;
   mesh.skeleton = skeleton;
   mesh.frustumCulled = false;
   if (source.morphTargetDictionary) {
@@ -173,23 +177,23 @@ async function buildAvatar(spec) {
   const headSkin = byMaterial.M_SKIN;
   const skeleton = headSkin.skeleton;
 
-  const skinMaterial = toonMaterial(await toonTexture(spec.skin));
-  const eyesMaterial = new THREE.MeshBasicMaterial({ transparent: true, fog: false, map: await faceTexture(spec.eyes) });
-  const mouthMaterial = new THREE.MeshBasicMaterial({ transparent: true, depthWrite: false, map: await faceTexture(spec.mouth) });
+  const skinMaterial = toonMaterial(await toonTexture(spec.skin), { name: 'skin' });
+  const eyesMaterial = new THREE.MeshBasicMaterial({ name: 'eyes', transparent: true, fog: false, map: await faceTexture(spec.eyes) });
+  const mouthMaterial = new THREE.MeshBasicMaterial({ name: 'mouth', transparent: true, depthWrite: false, map: await faceTexture(spec.mouth) });
 
   if (!spec.hideHead) {
-    group.add(rebind(headSkin, skeleton, skinMaterial));
-    if (eyesMaterial.map) group.add(rebind(byMaterial.M_EYES, skeleton, eyesMaterial));
-    if (mouthMaterial.map) group.add(rebind(byMaterial.M_MOUTH, skeleton, mouthMaterial));
+    group.add(rebind(headSkin, skeleton, skinMaterial, 'head'));
+    if (eyesMaterial.map) group.add(rebind(byMaterial.M_EYES, skeleton, eyesMaterial, 'eyes'));
+    if (mouthMaterial.map) group.add(rebind(byMaterial.M_MOUTH, skeleton, mouthMaterial, 'mouth'));
   }
 
   const handhelds = [];
   for (const item of spec.items) {
     const [gltf, texture] = await Promise.all([loadGltf(item.mesh), toonTexture(item.texture)]);
-    const itemMaterial = toonMaterial(texture);
+    const itemMaterial = toonMaterial(texture, { name: item.id });
     for (const source of skinnedMeshes(gltf.scene)) {
       const isSkin = source.material.name.toLowerCase().includes('skin');
-      const mesh = rebind(source, skeleton, isSkin ? skinMaterial : itemMaterial);
+      const mesh = rebind(source, skeleton, isSkin ? skinMaterial : itemMaterial, item.id);
       if (item.handheld) handhelds.push(mesh);
       else applyMorphTargets(mesh, spec.morphTargets);
       group.add(mesh);
@@ -217,8 +221,13 @@ function faceOffsets(track, time) {
   return [cell(step(e.x)), cell(step(e.y))];
 }
 
+const trackNode = (root, track) =>
+  THREE.PropertyBinding.findNode(root, THREE.PropertyBinding.parseTrackName(track.name).nodeName);
+
+// Poses the avatar at the chosen moment. Also returns every track that moves it, as one
+// clip for exporting.
 async function applyClip(spec, avatar) {
-  const info = { duration: 0, time: 0 };
+  const info = { duration: 0, time: 0, clip: null };
   if (!spec.clip) return info;
 
   const gltf = await loadGltf(spec.clip.glb);
@@ -230,14 +239,17 @@ async function applyClip(spec, avatar) {
   t = THREE.MathUtils.clamp(t, 0, source.duration);
   info.time = t;
 
-  let bodyTracks = source.tracks.filter((tr) => !tr.name.includes('PROP'));
-  const mixer = new THREE.AnimationMixer(avatar.skeleton.bones[0]);
+  // Some clips animate helper nodes the skeleton doesn't have; those tracks do nothing.
+  const root = avatar.skeleton.bones[0];
+  let bodyTracks = source.tracks.filter((tr) => !tr.name.includes('PROP') && trackNode(root, tr));
+  let gripTracks = [];
+  const mixer = new THREE.AnimationMixer(root);
 
   // During basic animations a held item's own clip drives the right hand (its grip),
   // replacing the body clip's right-hand tracks.
   if (spec.clip.basic && spec.handheld) {
     const grip = (await loadGltf(spec.handheld)).animations[0];
-    const gripTracks = grip ? grip.tracks.filter((tr) => tr.name.includes('RightHand')) : [];
+    gripTracks = grip ? grip.tracks.filter((tr) => tr.name.includes('RightHand')) : [];
     if (gripTracks.length) {
       bodyTracks = bodyTracks.filter((tr) => !tr.name.includes('RightHand'));
       mixer.clipAction(new THREE.AnimationClip('grip', grip.duration, gripTracks)).play();
@@ -256,16 +268,19 @@ async function applyClip(spec, avatar) {
 
   // Win-animation assets can ship props (chairs, ...) animated by their own tracks.
   const propTracks = source.tracks.filter((tr) => tr.name.includes('PROP') && !tr.name.includes('Group'));
-  const propTexture = await toonTexture(spec.clip.texture);
+  const propMaterial = toonMaterial(await toonTexture(spec.clip.texture), { skinned: false, name: spec.clip.name });
   const props = [];
   gltf.scene.traverse((o) => {
     if (o.type === 'Mesh' && o.name.includes('PROP')) props.push(o);
   });
+  // A grip clip longer than the body clip would stretch the exported animation.
+  const exportTracks = [...bodyTracks, ...gripTracks.map((tr) => tr.clone().trim(0, source.duration))];
   for (const original of props) {
     const prop = original.clone();
-    prop.material = toonMaterial(propTexture, { skinned: false });
+    prop.material = propMaterial;
     avatar.group.add(prop);
     const ownTracks = propTracks.filter((tr) => THREE.PropertyBinding.parseTrackName(tr.name).nodeName === prop.name);
+    exportTracks.push(...ownTracks);
     const propMixer = new THREE.AnimationMixer(prop);
     const propAction = propMixer.clipAction(new THREE.AnimationClip('prop', source.duration, ownTracks));
     propAction.setLoop(THREE.LoopOnce, 1);
@@ -273,6 +288,7 @@ async function applyClip(spec, avatar) {
     propAction.play();
     propMixer.setTime(t);
   }
+  info.clip = new THREE.AnimationClip(spec.clip.name, source.duration, exportTracks);
 
   // Held items shrink away (morph weight 1) while a non-basic animation plays.
   for (const m of avatar.handhelds) {
@@ -332,7 +348,7 @@ window.renderAvatar = async (spec) => {
   const scene = new THREE.Scene();
   const avatar = await buildAvatar(spec);
   scene.add(avatar.group);
-  const info = await applyClip(spec, avatar);
+  const { duration, time } = await applyClip(spec, avatar);
   const box = posedBounds(avatar.group, avatar.skeleton);
 
   renderer.setPixelRatio(spec.supersample);
@@ -346,7 +362,7 @@ window.renderAvatar = async (spec) => {
 
   const png = await downscalePng(spec);
   scene.traverse((o) => o.material?.dispose?.());
-  return { png, ...info, bounds: { min: box.min.toArray(), max: box.max.toArray() } };
+  return { png, duration, time, bounds: { min: box.min.toArray(), max: box.max.toArray() } };
 };
 
 // Render happens at width*supersample; scale down on a 2D canvas for smooth edges.
@@ -358,6 +374,45 @@ async function downscalePng(spec) {
   ctx.imageSmoothingQuality = 'high';
   ctx.drawImage(canvas, 0, 0, spec.width, spec.height);
   return out.toDataURL('image/png');
+}
+
+// --- Export -----------------------------------------------------------------------
+
+// glTF has no toon shading, so the export uses plain textured materials: matte PBR for
+// the body and clothes, and unlit (as on the site) for the eyes and mouth.
+function useExportMaterials(root) {
+  const converted = new Map();
+  root.traverse((o) => {
+    if (!o.material?.isShaderMaterial) return;
+    if (!converted.has(o.material)) {
+      const map = o.material.uniforms.tex.value;
+      if (map) map.colorSpace = THREE.SRGBColorSpace;
+      converted.set(o.material, new THREE.MeshStandardMaterial({ name: o.material.name, map, roughness: 1, metalness: 0 }));
+    }
+    o.material = converted.get(o.material);
+  });
+}
+
+// The posed avatar plus the clip, so viewers show the pose and can also play it.
+window.exportAvatar = async (spec) => {
+  const avatar = await buildAvatar(spec);
+  const { duration, time, clip } = await applyClip(spec, avatar);
+  // Exporting a Scene (rather than the group) keeps the skinned meshes at the root, as
+  // glTF recommends.
+  const scene = new THREE.Scene().add(...avatar.group.children);
+  scene.name = 'Avatar';
+  useExportMaterials(scene);
+  const glb = await new GLTFExporter().parseAsync(scene, { binary: true, animations: clip ? [clip] : [] });
+  return { glb: await dataUrl(new Blob([glb])), duration, time };
+};
+
+function dataUrl(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(blob);
+  });
 }
 
 window.rendererReady = true;

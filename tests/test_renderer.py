@@ -48,6 +48,8 @@ async def test_builtin_and_asset_clips(renderer, avatar_payload):
 async def test_time_and_progress_are_exclusive(renderer):
     with pytest.raises(ValueError):
         await renderer.render("u", time=1, progress=0.5)
+    with pytest.raises(ValueError):
+        await renderer.export_model("u", time=1, progress=0.5)
 
 
 async def test_unknown_animation_suggests_close_match(renderer, avatar_payload):
