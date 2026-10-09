@@ -1,6 +1,6 @@
 [project]
 name = "geoguessr-avatar"
-version = "0.2.0"
+version = "0.3.0"
 description = "Fetch GeoGuessr avatars, render them in any win/lose/emote animation pose, or export them as 3D models"
 readme = "README.md"
 license = "MIT"

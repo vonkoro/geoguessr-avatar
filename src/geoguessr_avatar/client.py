@@ -22,7 +22,7 @@ SITE_URL = "https://www.geoguessr.com"
 ASSETS_URL = f"{SITE_URL}/assets"
 IMAGES_URL = f"{SITE_URL}/images"
 
-USER_AGENT = "geoguessr-avatar/0.2 (+https://github.com/vonkoro/geoguessr-avatar)"
+USER_AGENT = "geoguessr-avatar/0.3 (+https://github.com/vonkoro/geoguessr-avatar)"
 
 # Content-hashed CDN paths never change; anything else is re-fetched after this long.
 MUTABLE_TTL = 7 * 24 * 3600
