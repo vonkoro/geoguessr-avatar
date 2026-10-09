@@ -3,6 +3,7 @@
 Render any GeoGuessr player's 3D avatar as a PNG, in any animation pose: their own win
 animation (including purchased ones with props, like the office chair), lose poses, taunts,
 idles and more. Built for things like daily-challenge podium images in community bots.
+You can also export the avatar itself as an animated 3D model (`.glb`).
 
 ![One avatar in six poses](https://raw.githubusercontent.com/vonkoro/geoguessr-avatar/main/docs/hero.png)
 
@@ -122,6 +123,33 @@ GeoGuessr's own full-body image.
 A few clips move the avatar sideways (e.g. `WIN_FLIP_JUMP`) and can leave a fixed frame. Use
 `framing="fit"` for those.
 
+## 3D models
+
+`export_model` gives you the avatar itself instead of a picture: a `.glb` (binary glTF) file
+with the textured avatar on its skeleton, which 3D tools, game engines and web viewers can open.
+
+```python
+from geoguessr_avatar import SyncAvatarRenderer
+
+with SyncAvatarRenderer() as renderer:
+    renderer.export_model("656461a8a02239a1b6a4482e").save("avatar.glb")
+    renderer.export_model("656461a8a02239a1b6a4482e", "TAUNT_BOXER", progress=0.4).save("boxer.glb")
+```
+
+```sh
+geoguessr-avatar model 656461a8a02239a1b6a4482e -a TAUNT_BOXER -o boxer.glb
+```
+
+It takes the same `animation`, `time` and `progress` as `render`. The model is posed at that
+moment, and the whole clip is included as well, so a viewer that plays animations plays it,
+props and all. Expect a few MB per file.
+
+Compared with the PNG renders:
+
+- glTF can't store GeoGuessr's toon shading, so the model uses plain matte materials and
+  takes on the lighting of whatever displays it.
+- The face expression stays the one at the chosen moment for the whole animation.
+
 ## Recipes
 
 **Podium.** [`examples/podium.py`](https://github.com/vonkoro/geoguessr-avatar/blob/main/examples/podium.py) puts the top three on a podium: the
@@ -147,7 +175,7 @@ async def main():
     async with GeoGuessrClient() as gg:
         avatar = await gg.get_avatar("656461a8a02239a1b6a4482e")
         print([item.id for item in avatar.items], avatar.win_animation)
-        hair_glb = await gg.asset(avatar.item(Slot.HAIR).mesh_glb)  # raw 3D model
+        hair_glb = await gg.asset(avatar.item(Slot.HAIR).mesh_glb)  # one item's raw mesh
         static_png = await gg.full_body_png(avatar.user_id)  # GeoGuessr's own static image
 
 
@@ -159,12 +187,13 @@ asyncio.run(main())
 ```sh
 geoguessr-avatar render <user> [-a ANIMATION] [-t SECONDS | -p PROGRESS] [-o FILE]
                         [--framing fixed|fit] [--zoom 0.85] [--size 540x720] [--background '#1d1b2e']
+geoguessr-avatar model <user> [-a ANIMATION] [-t SECONDS | -p PROGRESS] [-o FILE]   # 3D model
 geoguessr-avatar info <user>       # equipped items and win animation
 geoguessr-avatar animations        # list built-in animations
 ```
 
 `<user>` is a user ID or a profile URL. Without `-o`, the file is named
-`<user-id>_<animation>.png`.
+`<user-id>_<animation>.png` (or `.glb`).
 
 ## Running on a server
 
@@ -202,11 +231,15 @@ Everything is importable from `geoguessr_avatar`.
 - `SyncAvatarRenderer(cache_dir=None, software_gl=True)`: blocking. `.render(...)`, `.close()`, usable as `with`.
 - `AvatarRenderer(client=None, cache_dir=None, software_gl=True)`: async. `await .render(...)`, `await .aclose()`, usable as `async with`.
 - `render(user, animation=None, *, time, progress, width, height, framing, zoom, margin, background, supersample)` returns a `RenderResult`. `user` can also be an `Avatar` you already fetched.
+- `export_model(user, animation=None, *, time, progress)` returns a `ModelResult`.
 - `render_avatar(user, animation=None, **options)`: one-shot helper.
 - `software_gl=False` uses the machine's GPU instead of software rendering.
 
 **`RenderResult`**: `.png` (bytes), `.save(path)`, `.animation` (clip name or asset ID),
 `.time` and `.duration` (seconds), `.bounds` (3D bounding box of the posed avatar).
+
+**`ModelResult`**: `.glb` (bytes), `.save(path)`, `.animation`, `.time` (the pose) and
+`.duration` (seconds).
 
 **`GeoGuessrClient(ncfa=None, cache_dir=None)`** (async)
 - `get_avatar(user)` returns an `Avatar`.
@@ -236,6 +269,9 @@ This package does the same in a headless Chromium:
    hair, costumes hiding what's under them, face expressions, held items,
 4. jumps to the chosen moment and renders it with a toon shader matching the site's look.
 
+For a 3D model, step 4 instead swaps in plain materials and saves the posed scene and the clip
+with three.js's glTF exporter.
+
 | Data | Endpoint |
 |---|---|
 | Equipped items | `GET /api/v4/avatar/user/{userId}` |
@@ -251,7 +287,8 @@ items are always fetched fresh.
 
 ## Limitations
 
-- Still images only. For an animation, render several frames and combine them yourself.
+- Renders are still images. For an animated image, render several frames and combine them
+  yourself. 3D models do include the animation.
 - Club-branded clothing shows its base texture, without the club logo.
 - Pets, badges and emote bubbles are not drawn.
 - The random idle eye-blink isn't reproduced.

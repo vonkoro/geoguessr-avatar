@@ -80,8 +80,25 @@ class RenderResult:
         return path
 
 
+@dataclass(frozen=True)
+class ModelResult:
+    glb: bytes = field(repr=False)
+    """Binary glTF 2.0 file."""
+    animation: str
+    """Built-in clip name, or the asset ID of an equipped/purchasable win animation."""
+    duration: float
+    """Clip length in seconds."""
+    time: float
+    """The moment of the clip the model is posed at, in seconds."""
+
+    def save(self, path: str | Path) -> Path:
+        path = Path(path)
+        path.write_bytes(self.glb)
+        return path
+
+
 class AvatarRenderer:
-    """Renders still PNG frames of a player's avatar.
+    """Renders still PNG frames of a player's avatar, or exports it as a 3D model.
 
     Keep one renderer alive and reuse it: starting Chromium takes a moment, and parsed
     meshes stay cached in the page between renders::
@@ -183,14 +200,9 @@ class AvatarRenderer:
         :param margin: ``"fit"`` only. Empty space around the avatar, as a fraction.
         :param background: CSS-style hex colour, or ``None`` for transparency.
         """
-        if time is not None and progress is not None:
-            raise ValueError("pass time or progress, not both")
-        await self.start()
-        avatar = user if isinstance(user, Avatar) else await self.client.get_avatar(user)
-        clip = await self._resolve_clip(avatar, animation)
-
         if zoom <= 0:
             raise ValueError("zoom must be positive")
+        spec = await self._pose_spec(user, animation, time, progress)
         frame_height = FIXED_HEIGHT / zoom
         camera: dict[str, Any] = {
             "mode": framing,
@@ -199,30 +211,62 @@ class AvatarRenderer:
             "height": frame_height,
             "centerY": FIXED_BOTTOM + frame_height / 2,
         }
-        spec = {
-            **_avatar_spec(avatar),
-            "clip": clip,
-            "time": time,
-            "progress": progress,
-            "width": width,
-            "height": height,
-            "supersample": supersample,
-            "camera": camera,
-            "background": background,
-        }
-        async with self._lock:
-            assert self._page
-            out = await self._page.evaluate("spec => window.renderAvatar(spec)", spec)
-
-        png = base64.b64decode(out["png"].split(",", 1)[1])
+        spec.update(width=width, height=height, supersample=supersample, camera=camera, background=background)
+        out = await self._evaluate("window.renderAvatar", spec)
         b = out["bounds"]
         return RenderResult(
-            png=png,
-            animation=clip["name"],
+            png=_decode_data_url(out["png"]),
+            animation=spec["clip"]["name"],
             duration=out["duration"],
             time=out["time"],
             bounds=(tuple(b["min"]), tuple(b["max"])),
         )
+
+    async def export_model(
+        self,
+        user: str | Avatar,
+        animation: str | AvatarItem | None = None,
+        *,
+        time: float | None = None,
+        progress: float | None = None,
+    ) -> ModelResult:
+        """Export ``user``'s avatar as a 3D model: a binary glTF (``.glb``) file.
+
+        The model is the whole assembled avatar, textured and skinned to one skeleton,
+        posed at the chosen moment of ``animation``. The clip itself is included too, so
+        viewers and 3D tools that play glTF animations can play it.
+
+        Takes the same ``user``, ``animation``, ``time`` and ``progress`` as
+        :meth:`render`. The face expression and whether a held item is shown are fixed at
+        the chosen moment; glTF can't animate them.
+        """
+        spec = await self._pose_spec(user, animation, time, progress)
+        out = await self._evaluate("window.exportAvatar", spec)
+        return ModelResult(
+            glb=_decode_data_url(out["glb"]),
+            animation=spec["clip"]["name"],
+            duration=out["duration"],
+            time=out["time"],
+        )
+
+    async def _pose_spec(
+        self,
+        user: str | Avatar,
+        animation: str | AvatarItem | None,
+        time: float | None,
+        progress: float | None,
+    ) -> dict[str, Any]:
+        if time is not None and progress is not None:
+            raise ValueError("pass time or progress, not both")
+        await self.start()
+        avatar = user if isinstance(user, Avatar) else await self.client.get_avatar(user)
+        clip = await self._resolve_clip(avatar, animation)
+        return {**_avatar_spec(avatar), "clip": clip, "time": time, "progress": progress}
+
+    async def _evaluate(self, function: str, spec: dict[str, Any]) -> dict[str, Any]:
+        async with self._lock:
+            assert self._page
+            return await self._page.evaluate(f"spec => {function}(spec)", spec)
 
     async def _resolve_clip(self, avatar: Avatar, animation: str | AvatarItem | None) -> dict[str, Any]:
         if animation is None:
@@ -282,11 +326,16 @@ def _proxy(site_path: str) -> str:
     return f"{_ORIGIN}/gg/{site_path}"
 
 
+def _decode_data_url(url: str) -> bytes:
+    return base64.b64decode(url.split(",", 1)[1])
+
+
 def _avatar_spec(avatar: Avatar) -> dict[str, Any]:
     hidden = avatar.hidden_slots
     skip = {Slot.ANIMATION_WIN, Slot.COMPANION}
     items = [
         {
+            "id": i.id,
             "mesh": _proxy(f"assets/{i.mesh_glb}"),
             "texture": _proxy(f"assets/{i.texture}") if i.texture else None,
             "handheld": i.slot == Slot.HANDHELD,
@@ -375,6 +424,19 @@ class SyncAvatarRenderer:
             raise RuntimeError("renderer is closed")
         return self._call(self._renderer.render(user, animation, **kwargs), timeout=timeout)
 
+    def export_model(
+        self,
+        user: str | Avatar,
+        animation: str | AvatarItem | None = None,
+        *,
+        timeout: float | None = 120.0,
+        **kwargs: Any,
+    ) -> ModelResult:
+        """Same arguments as :meth:`AvatarRenderer.export_model`. ``timeout`` is in seconds."""
+        if self._closed:
+            raise RuntimeError("renderer is closed")
+        return self._call(self._renderer.export_model(user, animation, **kwargs), timeout=timeout)
+
     def close(self) -> None:
         if self._closed:
             return
@@ -390,7 +452,7 @@ class SyncAvatarRenderer:
             return future.result(timeout)
         except concurrent.futures.TimeoutError:
             future.cancel()
-            raise TimeoutError(f"render did not finish within {timeout} s") from None
+            raise TimeoutError(f"renderer did not finish within {timeout} s") from None
 
     def _stop_loop(self) -> None:
         self._loop.call_soon_threadsafe(self._loop.stop)
