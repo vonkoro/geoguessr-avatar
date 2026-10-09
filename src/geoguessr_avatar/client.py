@@ -27,6 +27,9 @@ USER_AGENT = "geoguessr-avatar/0.2 (+https://github.com/vonkoro/geoguessr-avatar
 # Content-hashed CDN paths never change; anything else is re-fetched after this long.
 MUTABLE_TTL = 7 * 24 * 3600
 
+# /api/v4/avatar/assets returns at most this many assets per request.
+ASSETS_PER_REQUEST = 8
+
 
 class GeoGuessrError(RuntimeError):
     pass
@@ -125,12 +128,20 @@ class GeoGuessrClient:
         return Avatar.from_api(user_id, data)
 
     async def get_assets(self, ids: list[str]) -> list[AvatarItem]:
-        """Look up any assets by ID (``/api/v4/avatar/assets?ids=...``)."""
-        if not ids:
-            return []
-        resp = await self._http.get(f"{SITE_URL}/api/v4/avatar/assets", params=[("ids", i) for i in ids])
-        resp.raise_for_status()
-        return [AvatarItem.from_api(d) for d in resp.json() or ()]
+        """Look up any assets by ID (``/api/v4/avatar/assets?ids=...``).
+
+        The endpoint answers at most 8 IDs per request and silently drops the rest, so longer
+        lists are fetched in batches. IDs it doesn't know are left out of the result.
+        """
+        found: list[AvatarItem] = []
+        for start in range(0, len(ids), ASSETS_PER_REQUEST):
+            batch = ids[start : start + ASSETS_PER_REQUEST]
+            resp = await self._http.get(
+                f"{SITE_URL}/api/v4/avatar/assets", params=[("ids", i) for i in batch]
+            )
+            resp.raise_for_status()
+            found += [AvatarItem.from_api(d) for d in resp.json() or ()]
+        return found
 
     async def get_background(self, user: str) -> dict[str, Any] | None:
         """Equipped profile background, or None if the player has none."""
