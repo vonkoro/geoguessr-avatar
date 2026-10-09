@@ -8,7 +8,7 @@ ENV PYTHONUNBUFFERED=1 \
     XDG_CACHE_HOME=/cache
 
 COPY . /src
-RUN pip install --no-cache-dir /src \
+RUN pip install --no-cache-dir "/src[render]" \
     && playwright install --with-deps --only-shell chromium \
     && rm -rf /src /var/lib/apt/lists/*
 

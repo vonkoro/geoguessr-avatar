@@ -9,8 +9,8 @@ from pathlib import Path
 
 from . import animations
 from .client import GeoGuessrClient, GeoGuessrError, parse_user_id
+from .errors import BrowserNotInstalled
 from .models import Slot
-from .renderer import AvatarRenderer, BrowserNotInstalled
 
 
 def _size(value: str) -> tuple[int, int]:
@@ -61,7 +61,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         commands = {"info": _info, "render": _render, "model": _model}
         return asyncio.run(commands[args.command](args))
-    except (GeoGuessrError, BrowserNotInstalled, ValueError, TimeoutError) as exc:
+    except (GeoGuessrError, BrowserNotInstalled, ImportError, ValueError, TimeoutError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
@@ -78,6 +78,8 @@ async def _info(args: argparse.Namespace) -> int:
 
 
 async def _render(args: argparse.Namespace) -> int:
+    from .renderer import AvatarRenderer
+
     width, height = args.size
     async with AvatarRenderer() as renderer:
         result = await renderer.render(
@@ -98,6 +100,8 @@ async def _render(args: argparse.Namespace) -> int:
 
 
 async def _model(args: argparse.Namespace) -> int:
+    from .renderer import AvatarRenderer
+
     async with AvatarRenderer() as renderer:
         result = await renderer.export_model(
             args.user, args.animation, time=args.time, progress=args.progress

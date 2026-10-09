@@ -61,6 +61,10 @@ version = "0.2.0"
 source = { editable = "." }
 dependencies = [
     { name = "httpx" },
+]
+
+[package.optional-dependencies]
+render = [
     { name = "playwright" },
 ]
 
@@ -75,8 +79,9 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "httpx", specifier = ">=0.27" },
-    { name = "playwright", specifier = ">=1.49" },
+    { name = "playwright", marker = "extra == 'render'", specifier = ">=1.49" },
 ]
+provides-extras = ["render"]
 
 [package.metadata.requires-dev]
 dev = [
