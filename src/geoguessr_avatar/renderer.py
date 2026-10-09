@@ -14,11 +14,17 @@ from importlib import resources
 from pathlib import Path
 from typing import Any, Literal
 
-from playwright.async_api import Browser, Page, Playwright, Route, async_playwright
-from playwright.async_api import Error as PlaywrightError
+try:
+    from playwright.async_api import Browser, Page, Playwright, Route, async_playwright
+    from playwright.async_api import Error as PlaywrightError
+except ImportError as exc:  # installed without the "render" extra
+    from .errors import RENDER_EXTRA_HINT
+
+    raise ImportError(RENDER_EXTRA_HINT) from exc
 
 from . import animations
 from .client import SITE_URL, GeoGuessrClient
+from .errors import INSTALL_HINT, BrowserNotInstalled  # noqa: F401  (re-exported)
 from .models import Avatar, AvatarItem, Slot
 
 log = logging.getLogger(__name__)
@@ -46,20 +52,6 @@ FIXED_HEIGHT = 1.184
 FIXED_BOTTOM = 0.497 - FIXED_HEIGHT / 2
 
 Framing = Literal["fixed", "fit"]
-
-INSTALL_HINT = (
-    "Chromium for Playwright is not installed. Run:\n"
-    "    playwright install chromium\n"
-    "On a Linux server use:\n"
-    "    playwright install --with-deps --only-shell chromium"
-)
-
-
-class BrowserNotInstalled(RuntimeError):
-    """Playwright's Chromium hasn't been downloaded yet."""
-
-    def __init__(self) -> None:
-        super().__init__(INSTALL_HINT)
 
 
 @dataclass(frozen=True)

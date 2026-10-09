@@ -14,7 +14,7 @@ You can also export the avatar itself as an animated 3D model (`.glb`).
 ## Quick start
 
 ```sh
-pip install geoguessr-avatar
+pip install "geoguessr-avatar[render]"
 playwright install chromium          # one-time download of the browser used for rendering
 
 geoguessr-avatar render 656461a8a02239a1b6a4482e -a LOSE_KNEES -o knees.png
@@ -164,7 +164,9 @@ python examples/podium.py <first-id> <second-id> <third-id> -o podium.png
 lose the transparency. Either pass `background="#..."`, or paste the PNG onto your own
 image first.
 
-**Just the data, no rendering:**
+**Just the data, no rendering:** a plain `pip install geoguessr-avatar` (without `[render]`)
+installs only httpx, no Playwright or browser. Good for servers that only need avatar data or
+the raw asset files, for example to assemble the avatar in your own three.js page.
 
 ```python
 import asyncio
@@ -215,6 +217,7 @@ docker run --rm -v "$PWD:/out" geoguessr-avatar render <user> -o /out/win.png
 
 | Message | Fix |
 |---|---|
+| `Rendering needs the 'render' extra` | Install it: `pip install "geoguessr-avatar[render]"`, then `playwright install chromium`. |
 | `Chromium for Playwright is not installed` | Run `playwright install chromium` (on Linux: `playwright install --with-deps --only-shell chromium`). |
 | `no GeoGuessr user with ID ...` | Check the ID. It's the 24-character code at the end of the profile URL. |
 | `unknown animation ...` | Check the spelling; the error suggests close matches. `geoguessr-avatar animations` lists them all. |
@@ -296,7 +299,7 @@ items are always fetched fresh.
 ## Development
 
 ```sh
-uv sync
+uv sync --all-extras
 uv run playwright install chromium
 uv run pytest                                      # offline tests
 GEOGUESSR_AVATAR_NETWORK_TESTS=1 uv run pytest     # + live site and Chromium

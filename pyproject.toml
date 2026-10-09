@@ -24,6 +24,11 @@ classifiers = [
 ]
 dependencies = [
     "httpx>=0.27",
+]
+
+[project.optional-dependencies]
+# Rendering PNGs and exporting .glb models runs three.js in headless Chromium.
+render = [
     "playwright>=1.49",
 ]
 
